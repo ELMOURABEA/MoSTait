@@ -760,7 +760,15 @@ static int submodule_create_branch(struct repository *r,
 		break;
 	}
 
-	strvec_pushl(&child.args, name, start_oid, tracking_name, NULL);
+	/*
+	 * The tracking name is absent when the start point named no ref.
+	 * Push it separately: strvec_pushl() stops at the first NULL, so
+	 * passing it inline would drop the argument by accident rather
+	 * than by intent.
+	 */
+	strvec_pushl(&child.args, name, start_oid, NULL);
+	if (tracking_name)
+		strvec_push(&child.args, tracking_name);
 
 	if ((ret = start_command(&child)))
 		return ret;
@@ -840,7 +848,7 @@ void create_branches_recursively(struct repository *r, const char *name,
 	 * tedious to determine whether or not tracking was set up in the
 	 * superproject.
 	 */
-	if (track)
+	if (tracking_name && track)
 		setup_tracking(name, tracking_name, track, quiet);
 
 	for (i = 0; i < submodule_entry_list.entry_nr; i++) {
@@ -860,9 +868,11 @@ out:
 	free(branch_point);
 }
 
-void remove_merge_branch_state(struct repository *r)
+static void do_remove_merge_branch_state(struct repository *r, unsigned flags)
 {
 	unlink(git_path_merge_head(r));
+	if (!(flags & REMOVE_BRANCH_STATE_PRESERVE_CONFLICT_LABELS))
+		unlink(git_path_merge_labels(r));
 	unlink(git_path_merge_rr(r));
 	unlink(git_path_merge_msg(r));
 	unlink(git_path_merge_mode(r));
@@ -871,11 +881,16 @@ void remove_merge_branch_state(struct repository *r)
 	save_autostash_ref(r, "MERGE_AUTOSTASH");
 }
 
-void remove_branch_state(struct repository *r, int verbose)
+void remove_merge_branch_state(struct repository *r)
 {
-	sequencer_post_commit_cleanup(r, verbose);
+	do_remove_merge_branch_state(r, 0);
+}
+
+void remove_branch_state(struct repository *r, unsigned flags)
+{
+	sequencer_post_commit_cleanup(r, flags & REMOVE_BRANCH_STATE_VERBOSE);
 	unlink(git_path_squash_msg(r));
-	remove_merge_branch_state(r);
+	do_remove_merge_branch_state(r, flags);
 }
 
 void die_if_checked_out(const char *branch, int ignore_current_worktree)

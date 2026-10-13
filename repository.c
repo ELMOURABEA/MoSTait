@@ -126,9 +126,9 @@ const char *repo_get_common_dir(struct repository *repo)
 
 const char *repo_get_object_directory(struct repository *repo)
 {
-	if (!repo->objects->sources)
+	if (!repo->objects->source)
 		BUG("repository hasn't been set up");
-	return repo->objects->sources->path;
+	return repo->objects->source->path;
 }
 
 const char *repo_get_index_file(struct repository *repo)
@@ -367,6 +367,7 @@ static void repo_clear_path_cache(struct repo_path_cache *cache)
 	FREE_AND_NULL(cache->merge_head);
 	FREE_AND_NULL(cache->fetch_head);
 	FREE_AND_NULL(cache->shallow);
+	FREE_AND_NULL(cache->merge_labels);
 }
 
 void repo_clear(struct repository *repo)

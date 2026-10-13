@@ -30,6 +30,7 @@
 #include "object-name.h"
 #include "odb.h"
 #include "odb/source.h"
+#include "odb/source-files.h"
 #include "advice.h"
 #include "branch.h"
 #include "list-objects-filter-options.h"
@@ -1770,7 +1771,7 @@ static const char alternate_error_advice[] = N_(
 );
 
 static int add_possible_reference_from_superproject(
-		struct odb_source *alt_odb, void *sas_cb)
+		struct odb_files_dir *alt_odb, void *sas_cb)
 {
 	struct submodule_alternate_setup *sas = sas_cb;
 	size_t len;
@@ -1779,12 +1780,12 @@ static int add_possible_reference_from_superproject(
 	 * If the alternate object store is another repository, try the
 	 * standard layout with .git/(modules/<name>)+/objects
 	 */
-	if (strip_suffix(alt_odb->path, "/objects", &len)) {
+	if (strip_suffix(alt_odb->abspath, "/objects", &len)) {
 		struct repository alternate;
 		char *sm_alternate;
 		struct strbuf sb = STRBUF_INIT;
 		struct strbuf err = STRBUF_INIT;
-		strbuf_add(&sb, alt_odb->path, len);
+		strbuf_add(&sb, alt_odb->abspath, len);
 
 		if (repo_init(&alternate, sb.buf, NULL) < 0)
 			die(_("could not get a repository handle for gitdir '%s'"),
@@ -3342,7 +3343,7 @@ static int module_create_branch(int argc, const char **argv, const char *prefix,
 		OPT_END()
 	};
 	const char *const usage[] = {
-		N_("git submodule--helper create-branch [-f|--force] [--create-reflog] [-q|--quiet] [-t|--track] [-n|--dry-run] <name> <start-oid> <start-name>"),
+		N_("git submodule--helper create-branch [-f|--force] [--create-reflog] [-q|--quiet] [-t|--track] [-n|--dry-run] <name> <start-oid> [<start-name>]"),
 		NULL
 	};
 	struct repo_config_values *cfg = repo_config_values(the_repository);
@@ -3351,13 +3352,14 @@ static int module_create_branch(int argc, const char **argv, const char *prefix,
 	track = cfg->branch_track;
 	argc = parse_options(argc, argv, prefix, options, usage, 0);
 
-	if (argc != 3)
+	if (argc < 2 || argc > 3)
 		usage_with_options(usage, options);
 
 	if (!quiet && !dry_run)
 		printf_ln(_("creating branch '%s'"), argv[0]);
 
-	create_branches_recursively(the_repository, argv[0], argv[1], argv[2],
+	create_branches_recursively(the_repository, argv[0], argv[1],
+				    argc > 2 ? argv[2] : NULL,
 				    force, reflog, quiet, track, dry_run);
 	return 0;
 }

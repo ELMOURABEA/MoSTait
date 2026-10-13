@@ -845,6 +845,92 @@ test_expect_success 'format-patch --range-diff with multiple notes' '
 	test_cmp expect actual
 '
 
+# Unlike '--notes', '--range-diff-notes' requires a value
+test_expect_success 'format-patch --range-diff-notes requires a value' '
+	cat >expect <<-EOF &&
+	error: option \`range-diff-notes${SQ} requires a value
+	EOF
+	test_must_fail git format-patch --range-diff=main..topic \
+		--cover-letter --range-diff-notes 2>actual &&
+	test_cmp expect actual
+'
+
+# The '--range-diff-notes' has no effect but is allowed
+test_expect_success 'format-patch --range-diff-notes=not-a-note (no --range-diff)' '
+	test_when_finished "rm -f 000?-*" &&
+	git format-patch --range-diff-notes=not-a-note --cover-letter \
+		main..unmodified &&
+	test_file_not_empty 0000-cover-letter* &&
+	test_grep ! "^Range-diff:" 0000-cover-letter* &&
+	test_grep ! "## Notes " 0000-cover-letter*
+'
+
+test_expect_success 'format-patch --range-diff --notes=custom --no-range-diff-notes' '
+	test_when_finished "git notes --ref=custom remove topic unmodified || :" &&
+	git notes --ref=custom add -m "topic note1" topic &&
+	git notes --ref=custom add -m "unmodified note1" unmodified &&
+	test_when_finished "rm -f 000?-*" &&
+	git format-patch --range-diff=main..topic --notes=custom \
+		--no-range-diff-notes --cover-letter \
+		main..unmodified &&
+	test_grep "^Notes (custom):" 0004-* &&
+	test_grep "^Range-diff:" 0000-cover-letter* &&
+	test_grep ! "## Notes (custom) ##" 0000-cover-letter*
+'
+
+test_expect_success 'format-patch --range-diff --no-notes --range-diff-notes=custom' '
+	test_when_finished "git notes --ref=custom remove topic unmodified || :" &&
+	git notes --ref=custom add -m "topic note1" topic &&
+	git notes --ref=custom add -m "unmodified note1" unmodified &&
+	test_when_finished "rm -f 000?-*" &&
+	git format-patch --range-diff=main..topic --no-notes \
+		--range-diff-notes=custom --cover-letter \
+		main..unmodified &&
+	test_grep ! "^Notes (custom):" 0004-* &&
+	test_grep "^Range-diff:" 0000-cover-letter* &&
+	test_grep "## Notes (custom) ##" 0000-cover-letter*
+'
+
+test_expect_success 'format-patch --range-diff --notes=patch --range-diff-notes=rdiff' '
+	test_when_finished "git notes --ref=patch remove topic unmodified || :" &&
+	git notes --ref=patch add -m "only for patch 1" topic &&
+	git notes --ref=patch add -m "only for patch 2" unmodified &&
+	test_when_finished "git notes --ref=rdiff remove topic unmodified || :" &&
+	git notes --ref=rdiff add -m "only for range diff 1" topic &&
+	git notes --ref=rdiff add -m "only for range diff 2" unmodified &&
+	test_when_finished "rm -f 000?-*" &&
+	git format-patch --range-diff=main..topic --notes=patch \
+		--range-diff-notes=rdiff --cover-letter \
+		main..unmodified &&
+	test_grep "^Notes (patch):" 0004-* &&
+	test_grep ! "^Notes (rdiff):" 0004-* &&
+	test_grep "^Range-diff:" 0000-cover-letter* &&
+	test_grep "## Notes (rdiff) ##" 0000-cover-letter* &&
+	test_grep ! "## Notes (patch) ##" 0000-cover-letter*
+'
+
+test_expect_success 'format-patch --range-diff --no-range-diff-notes on single patch' '
+	test_when_finished "git notes --ref=custom remove HEAD unmodified || :" &&
+	git notes --ref=custom add -m "topic note (custom)" HEAD &&
+	git notes --ref=custom add -m "unmodified note (custom)" unmodified &&
+	git format-patch --notes=custom --range-diff=main..topic \
+		--no-range-diff-notes -1 --stdout >actual &&
+	test_grep "Notes (custom):" actual &&
+	test_grep "^Range-diff:" actual &&
+	test_grep ! "## Notes (custom) ##" actual
+'
+
+test_expect_success 'format-patch --range-diff --range-diff-notes=custom on single patch' '
+	test_when_finished "git notes --ref=custom remove HEAD unmodified || :" &&
+	git notes --ref=custom add -m "topic note (custom)" HEAD &&
+	git notes --ref=custom add -m "unmodified note (custom)" unmodified &&
+	git format-patch --range-diff=main..topic \
+		--range-diff-notes=custom -1 --stdout >actual &&
+	test_grep ! "Notes (custom):" actual &&
+	test_grep "^Range-diff:" actual &&
+	test_grep "## Notes (custom) ##" actual
+'
+
 test_expect_success '--left-only/--right-only' '
 	git switch --orphan left-right &&
 	test_commit first &&
@@ -858,6 +944,69 @@ test_expect_success '--left-only/--right-only' '
 	common_oid=$(git rev-parse --short common) &&
 	echo "1:  $head_oid = 2:  $common_oid common" >expect &&
 	test_cmp expect actual
+'
+
+test_expect_success '--left-only, --right-only and --matched-only are incompatible' '
+	test_must_fail git range-diff --left-only --right-only ...common 2>err &&
+	test_grep "cannot be used together" err &&
+
+	test_must_fail git range-diff --left-only --matched-only ...common 2>err &&
+	test_grep "cannot be used together" err &&
+
+	test_must_fail git range-diff --right-only --matched-only ...common 2>err &&
+	test_grep "cannot be used together" err &&
+
+	test_must_fail git range-diff --left-only --right-only --matched-only \
+		...common 2>err &&
+	test_grep "cannot be used together" err
+'
+
+test_expect_success '--left-only, --right-only and --matched-only each suppress one-sided commits' '
+	test_create_repo matched-only &&
+	(
+		cd matched-only &&
+		git switch --orphan combined-old &&
+		test_commit c-first &&
+		test_commit c-old-only &&
+		test_commit c-common &&
+		git switch -C combined-new c-first &&
+		test_commit c-new-only &&
+		git cherry-pick c-common &&
+
+		old_only_oid=$(git rev-parse --short=7 c-old-only) &&
+		new_only_oid=$(git rev-parse --short=7 c-new-only) &&
+		common_old_oid=$(git rev-parse --short=7 c-common) &&
+		common_new_oid=$(git rev-parse --short=7 HEAD) &&
+
+		git range-diff -s --abbrev=7 combined-old...combined-new >actual &&
+		cat >expect <<-EOF &&
+		1:  $old_only_oid < -:  ------- c-old-only
+		-:  ------- > 1:  $new_only_oid c-new-only
+		2:  $common_old_oid = 2:  $common_new_oid c-common
+		EOF
+		test_cmp expect actual &&
+
+		git range-diff -s --abbrev=7 --left-only combined-old...combined-new \
+			>actual &&
+		cat >expect <<-EOF &&
+		1:  $old_only_oid < -:  ------- c-old-only
+		2:  $common_old_oid = 2:  $common_new_oid c-common
+		EOF
+		test_cmp expect actual &&
+
+		git range-diff -s --abbrev=7 --right-only combined-old...combined-new \
+			>actual &&
+		cat >expect <<-EOF &&
+		-:  ------- > 1:  $new_only_oid c-new-only
+		2:  $common_old_oid = 2:  $common_new_oid c-common
+		EOF
+		test_cmp expect actual &&
+
+		git range-diff -s --abbrev=7 --matched-only combined-old...combined-new \
+			>actual &&
+		echo "2:  $common_old_oid = 2:  $common_new_oid c-common" >expect &&
+		test_cmp expect actual
+	)
 '
 
 test_expect_success 'ranges with pathspecs' '
